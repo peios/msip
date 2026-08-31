@@ -220,3 +220,31 @@ fn defaults_fill_unanswered_optional_elements() {
     };
     assert_eq!(v.values["hostname"], json!("peios-4f2a"));
 }
+
+#[test]
+fn log_append_folds_into_lines_on_both_sides() {
+    let mut conv = Conversation::new("install").unwrap();
+    let mut log = Element::new("out", types::LOG);
+    log.state.insert("lines".into(), json!(["first"]));
+    conv.issue(TurnSpec { elements: vec![log], ..Default::default() }).unwrap();
+
+    let mut surf = Session::new();
+    let body = serde_json::to_value(conv.current_turn().unwrap()).unwrap();
+    surf.handle(MsgType::Turn, body).unwrap();
+
+    let mut patch = Map::new();
+    patch.insert("ref".into(), json!("out"));
+    patch.insert("append".into(), json!(["second", "third"]));
+    let upd = conv.update(vec![patch]).unwrap();
+    let body = serde_json::to_value(&upd).unwrap();
+    surf.handle(MsgType::Update, body).unwrap();
+
+    let expect = json!(["first", "second", "third"]);
+    // Folded on the daemon side (what a late joiner is sent)…
+    assert_eq!(
+        conv.current_turn().unwrap().elements[0].state["lines"], expect
+    );
+    assert!(!conv.current_turn().unwrap().elements[0].state.contains_key("append"));
+    // …and on the surface side (what a renderer draws).
+    assert_eq!(surf.page().unwrap().element("out").unwrap().state["lines"], expect);
+}
