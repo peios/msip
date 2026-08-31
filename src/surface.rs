@@ -56,8 +56,9 @@ fn merge(elem: &mut Element, patch: &Map<String, Value>) {
         Ok(Value::Object(m)) => m,
         _ => return,
     };
+    let folded_append = fold_log_append(&mut as_value, patch);
     for (k, v) in patch {
-        if k == "ref" {
+        if k == "ref" || (folded_append && k == "append") {
             continue;
         }
         if v.is_null() {
@@ -169,4 +170,25 @@ impl Session {
             values,
         })
     }
+}
+
+/// The one type-aware folding rule: a sparse patch to a `log` element
+/// carrying `append` extends `lines` rather than storing `append`
+/// (§3.B), so folded state accumulates and a late joiner receives the
+/// whole log.
+fn fold_log_append(as_value: &mut serde_json::Map<String, Value>, patch: &Map<String, Value>) -> bool {
+    let is_log = as_value.get("type").and_then(Value::as_str) == Some("log");
+    let Some(Value::Array(added)) = patch.get("append") else {
+        return false;
+    };
+    if !is_log {
+        return false;
+    }
+    let lines = as_value
+        .entry("lines".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Value::Array(lines) = lines {
+        lines.extend(added.iter().cloned());
+    }
+    true
 }
