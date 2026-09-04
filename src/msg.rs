@@ -71,6 +71,14 @@ pub enum RefusedReason {
     AccessDenied,
     UnknownKind,
     UnsupportedElements,
+    /// The daemon offers this kind but cannot open a conversation now.
+    ///
+    /// Its own reason because none of the others is true: the kind
+    /// exists, the caller may have it, and the surface can render it —
+    /// the daemon simply failed at something of its own. Without it a
+    /// daemon in that position can only hang up, and a surface cannot
+    /// tell a broken daemon from a slow one.
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
