@@ -18,8 +18,11 @@ pub mod types {
     pub const PROGRESS: &str = "progress";
     pub const LOG: &str = "log";
     pub const ACTION: &str = "action";
+    /// Rows with columns, and a choice among them: a `select` whose
+    /// choices have more to say than a name.
+    pub const TABLE: &str = "table";
 
-    pub const ALL: &[&str] = &[TEXT, STRING, BOOLEAN, SELECT, PROGRESS, LOG, ACTION];
+    pub const ALL: &[&str] = &[TEXT, STRING, BOOLEAN, SELECT, PROGRESS, LOG, ACTION, TABLE];
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,7 +48,7 @@ pub struct Element {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Type-specific state: `choices`, `min`/`max`, `value`, `lines`,
-    /// `validate`, `primary`, `destructive`, ...
+    /// `validate`, `primary`, `destructive`, `columns`/`rows`, ...
     #[serde(flatten)]
     pub state: Map<String, Value>,
 }
