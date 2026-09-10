@@ -15,7 +15,7 @@ use std::io::{self, Read};
 
 use serde_json::{Map, Value};
 
-use crate::element::{types, Element};
+use crate::element::{Element, types};
 use crate::msg::{Answer, End, ErrorCode, ErrorMsg, Outcome, Turn, Update};
 
 /// A turn as the application describes it; `Conversation::issue`
@@ -239,19 +239,19 @@ impl Conversation {
                     return Disposition::Protocol(ErrorMsg {
                         code: ErrorCode::UnknownRef,
                         message: Some(format!("no element {r:?} in turn {}", turn.seq)),
-                    })
+                    });
                 }
                 Some(e) if e.is_action() => {
                     return Disposition::Protocol(ErrorMsg {
                         code: ErrorCode::BadValue,
                         message: Some(format!("{r:?} is an action and carries no value")),
-                    })
+                    });
                 }
                 Some(e) if !e.enabled => {
                     return Disposition::Protocol(ErrorMsg {
                         code: ErrorCode::BadValue,
                         message: Some(format!("{r:?} is disabled")),
-                    })
+                    });
                 }
                 Some(_) => {}
             }
@@ -268,20 +268,20 @@ impl Conversation {
                     return Disposition::Protocol(ErrorMsg {
                         code: ErrorCode::BadValue,
                         message: Some(format!("{a:?} is not an enabled action")),
-                    })
+                    });
                 }
                 None => {
                     return Disposition::Protocol(ErrorMsg {
                         code: ErrorCode::UnknownRef,
                         message: Some(format!("no action {a:?} in turn {}", turn.seq)),
-                    })
+                    });
                 }
             },
             None if has_actions => {
                 return Disposition::Protocol(ErrorMsg {
                     code: ErrorCode::BadValue,
                     message: Some("turn offers actions; the answer must name one".into()),
-                })
+                });
             }
             None => true,
         };
@@ -339,7 +339,10 @@ fn merge_patch(elem: &mut Element, patch: &Map<String, Value>) {
 /// carrying `append` extends `lines` rather than storing `append`
 /// (§3.B), so folded state accumulates and a late joiner receives the
 /// whole log.
-fn fold_log_append(as_value: &mut serde_json::Map<String, Value>, patch: &Map<String, Value>) -> bool {
+fn fold_log_append(
+    as_value: &mut serde_json::Map<String, Value>,
+    patch: &Map<String, Value>,
+) -> bool {
     let is_log = as_value.get("type").and_then(Value::as_str) == Some("log");
     let Some(Value::Array(added)) = patch.get("append") else {
         return false;

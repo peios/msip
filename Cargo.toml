@@ -1,9 +1,22 @@
 [package]
 name = "msip"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.98.1"
 description = "Multi-Surface Interaction Protocol (PGSS MSIP): framing, messages, element model, and the daemon/surface state machines"
+license = "MIT"
+repository = "https://github.com/peios/msip"
+homepage = "https://github.com/peios/msip"
+publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[profile.release]
+# Distribution builds detach full DWARF into debuginfo packages. Keep it in
+# the linked artifact until the packaging split, and remove incremental state
+# from the reproducibility boundary.
+debug = 2
+split-debuginfo = "off"
+incremental = false

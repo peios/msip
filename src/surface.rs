@@ -10,9 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::element::Element;
 use crate::frame::MsgType;
-use crate::msg::{
-    Answer, Bound, End, ErrorMsg, Listing, Refused, Turn, Update, Welcome,
-};
+use crate::msg::{Answer, Bound, End, ErrorMsg, Listing, Refused, Turn, Update, Welcome};
 
 #[derive(Debug, Clone)]
 pub struct Page {
@@ -176,7 +174,10 @@ impl Session {
 /// carrying `append` extends `lines` rather than storing `append`
 /// (§3.B), so folded state accumulates and a late joiner receives the
 /// whole log.
-fn fold_log_append(as_value: &mut serde_json::Map<String, Value>, patch: &Map<String, Value>) -> bool {
+fn fold_log_append(
+    as_value: &mut serde_json::Map<String, Value>,
+    patch: &Map<String, Value>,
+) -> bool {
     let is_log = as_value.get("type").and_then(Value::as_str) == Some("log");
     let Some(Value::Array(added)) = patch.get("append") else {
         return false;

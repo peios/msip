@@ -3,10 +3,10 @@
 //! answers are ignored, validation keeps the turn open for everyone,
 //! late joiners receive current state.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use msip::daemon::{Conversation, Disposition, TurnSpec};
-use msip::element::{types, Element};
+use msip::element::{Element, types};
 use msip::frame::MsgType;
 use msip::msg::{Outcome, Turn, Update};
 use msip::surface::{Event, Session};
@@ -17,7 +17,10 @@ fn val(v: Value) -> Value {
 
 fn disk_turn() -> TurnSpec {
     let mut intro = Element::new("disk.intro", types::TEXT);
-    intro.state.insert("text".into(), json!("Everything on the selected disk will be erased."));
+    intro.state.insert(
+        "text".into(),
+        json!("Everything on the selected disk will be erased."),
+    );
     let mut target = Element::new("disk.target", types::SELECT);
     target.name = Some("Target disk".into());
     target.required = true;
@@ -41,14 +44,20 @@ fn disk_turn() -> TurnSpec {
 fn broadcast_turn(surfaces: &mut [&mut Session], turn: &Turn) {
     for s in surfaces {
         let body = serde_json::to_value(turn).unwrap();
-        assert!(matches!(s.handle(MsgType::Turn, body).unwrap(), Event::NewTurn));
+        assert!(matches!(
+            s.handle(MsgType::Turn, body).unwrap(),
+            Event::NewTurn
+        ));
     }
 }
 
 fn broadcast_update(surfaces: &mut [&mut Session], upd: &Update) {
     for s in surfaces {
         let body = serde_json::to_value(upd).unwrap();
-        assert!(matches!(s.handle(MsgType::Update, body).unwrap(), Event::Updated));
+        assert!(matches!(
+            s.handle(MsgType::Update, body).unwrap(),
+            Event::Updated
+        ));
     }
 }
 
@@ -112,7 +121,12 @@ fn validation_keeps_the_turn_open_for_everyone() {
     let upd = conv.reject(&missing).unwrap();
     broadcast_update(&mut [&mut a, &mut b], &upd);
     assert_eq!(
-        b.page().unwrap().element("disk.target").unwrap().error.as_deref(),
+        b.page()
+            .unwrap()
+            .element("disk.target")
+            .unwrap()
+            .error
+            .as_deref(),
         Some("required")
     );
 
@@ -226,7 +240,11 @@ fn log_append_folds_into_lines_on_both_sides() {
     let mut conv = Conversation::new("install").unwrap();
     let mut log = Element::new("out", types::LOG);
     log.state.insert("lines".into(), json!(["first"]));
-    conv.issue(TurnSpec { elements: vec![log], ..Default::default() }).unwrap();
+    conv.issue(TurnSpec {
+        elements: vec![log],
+        ..Default::default()
+    })
+    .unwrap();
 
     let mut surf = Session::new();
     let body = serde_json::to_value(conv.current_turn().unwrap()).unwrap();
@@ -242,9 +260,17 @@ fn log_append_folds_into_lines_on_both_sides() {
     let expect = json!(["first", "second", "third"]);
     // Folded on the daemon side (what a late joiner is sent)…
     assert_eq!(
-        conv.current_turn().unwrap().elements[0].state["lines"], expect
+        conv.current_turn().unwrap().elements[0].state["lines"],
+        expect
     );
-    assert!(!conv.current_turn().unwrap().elements[0].state.contains_key("append"));
+    assert!(
+        !conv.current_turn().unwrap().elements[0]
+            .state
+            .contains_key("append")
+    );
     // …and on the surface side (what a renderer draws).
-    assert_eq!(surf.page().unwrap().element("out").unwrap().state["lines"], expect);
+    assert_eq!(
+        surf.page().unwrap().element("out").unwrap().state["lines"],
+        expect
+    );
 }

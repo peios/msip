@@ -5,11 +5,11 @@
 use std::os::unix::net::UnixStream;
 use std::thread;
 
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use msip::daemon::{Conversation, Disposition, TurnSpec};
-use msip::element::{types, Element};
-use msip::frame::{read_msg, write_msg, FrameError, MsgType};
+use msip::element::{Element, types};
+use msip::frame::{FrameError, MsgType, read_msg, write_msg};
 use msip::msg::{Bound, Hello, Outcome, Welcome};
 use msip::surface::{Event, Session};
 
@@ -50,9 +50,10 @@ fn full_conversation_over_a_socket() {
         .unwrap();
         let mut target = Element::new("disk.target", types::SELECT);
         target.required = true;
-        target
-            .state
-            .insert("choices".into(), json!([{"value": "/dev/sda", "name": "disk"}]));
+        target.state.insert(
+            "choices".into(),
+            json!([{"value": "/dev/sda", "name": "disk"}]),
+        );
         let turn = conv
             .issue(TurnSpec {
                 id: Some("disk.choose".into()),
@@ -110,7 +111,14 @@ fn full_conversation_over_a_socket() {
     };
     assert_eq!(w.kinds, vec!["install"]);
 
-    write_msg(&mut s_sock, MsgType::Start, &msip::msg::Start { kind: "install".into() }).unwrap();
+    write_msg(
+        &mut s_sock,
+        MsgType::Start,
+        &msip::msg::Start {
+            kind: "install".into(),
+        },
+    )
+    .unwrap();
     let (t, body) = read_msg(&mut s_sock).unwrap();
     let Event::Bound(b) = session.handle(t, body).unwrap() else {
         panic!()
@@ -145,7 +153,8 @@ fn full_conversation_over_a_socket() {
 fn wrong_magic_fails_the_connection_on_byte_zero() {
     use std::io::Write;
     let (mut a, mut b) = UnixStream::pair().unwrap();
-    a.write_all(b"PGSL\x01\x00\x01\x00\x0c\x00\x00\x00").unwrap();
+    a.write_all(b"PGSL\x01\x00\x01\x00\x0c\x00\x00\x00")
+        .unwrap();
     match read_msg(&mut b) {
         Err(FrameError::BadMagic(m)) => assert_eq!(&m, b"PGSL"),
         other => panic!("expected BadMagic, got {other:?}"),
