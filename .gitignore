@@ -1,1 +1,7 @@
-/target
+/target/
+/bazel-*
+/.ci-*
+**/__pycache__/
+*.pyc
+/.ruff_cache/
+/docs/learn/dist/
