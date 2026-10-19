@@ -10,14 +10,17 @@ use serde_json::{Map, Value};
 
 use crate::element::Element;
 use crate::frame::MsgType;
+use crate::patch::{self, PatchError};
 use crate::msg::{Answer, Bound, End, ErrorMsg, Listing, Refused, Turn, Update, Welcome};
 
+/// The outstanding turn after all accepted updates have been folded into it.
 #[derive(Debug, Clone)]
 pub struct Page {
     pub turn: Turn,
 }
 
 impl Page {
+    /// Look up an element by its stable ref.
     pub fn element(&self, r: &str) -> Option<&Element> {
         self.turn.elements.iter().find(|e| e.r#ref == r)
     }
@@ -38,35 +41,11 @@ impl Page {
             self.turn.elements = elements;
             return Ok(());
         }
-        for patch in &upd.elements {
-            let target = patch.get("ref").and_then(Value::as_str).unwrap_or_default();
-            let Some(elem) = self.turn.elements.iter_mut().find(|e| e.r#ref == target) else {
-                return Err(SessionError::UnknownRef(target.to_string()));
-            };
-            merge(elem, patch);
-        }
+        patch::apply(&mut self.turn.elements, &upd.elements).map_err(|error| match error {
+            PatchError::UnknownRef(name) => SessionError::UnknownRef(name),
+            PatchError::Malformed(message) => SessionError::Malformed(message),
+        })?;
         Ok(())
-    }
-}
-
-fn merge(elem: &mut Element, patch: &Map<String, Value>) {
-    let mut as_value = match serde_json::to_value(&*elem) {
-        Ok(Value::Object(m)) => m,
-        _ => return,
-    };
-    let folded_append = fold_log_append(&mut as_value, patch);
-    for (k, v) in patch {
-        if k == "ref" || (folded_append && k == "append") {
-            continue;
-        }
-        if v.is_null() {
-            as_value.remove(k);
-        } else {
-            as_value.insert(k.clone(), v.clone());
-        }
-    }
-    if let Ok(updated) = serde_json::from_value(Value::Object(as_value)) {
-        *elem = updated;
     }
 }
 
@@ -85,6 +64,7 @@ pub enum Event {
     ProtocolError(ErrorMsg),
 }
 
+/// A rejected daemon message. Rejected updates and End messages preserve the page.
 #[derive(Debug)]
 pub enum SessionError {
     Malformed(String),
@@ -105,6 +85,10 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+/// State for rendering a single conversation.
+///
+/// The caller enforces greeting, binding, capability negotiation, and transport
+/// deadlines. This helper accepts decoded messages without a connection-state gate.
 #[derive(Default)]
 pub struct Session {
     conversation: Option<String>,
@@ -112,10 +96,12 @@ pub struct Session {
 }
 
 impl Session {
+    /// Create a session without a binding or page.
     pub fn new() -> Session {
         Session::default()
     }
 
+    /// Return the last Bound identifier, retained after End for result display.
     pub fn conversation(&self) -> Option<&str> {
         self.conversation.as_deref()
     }
@@ -152,8 +138,9 @@ impl Session {
                 Ok(Event::Updated)
             }
             MsgType::End => {
+                let end = parse(body)?;
                 self.page = None;
-                Ok(Event::Ended(parse(body)?))
+                Ok(Event::Ended(end))
             }
             MsgType::Error => Ok(Event::ProtocolError(parse(body)?)),
             other => Err(SessionError::UnexpectedType(other)),
@@ -168,28 +155,4 @@ impl Session {
             values,
         })
     }
-}
-
-/// The one type-aware folding rule: a sparse patch to a `log` element
-/// carrying `append` extends `lines` rather than storing `append`
-/// (§3.B), so folded state accumulates and a late joiner receives the
-/// whole log.
-fn fold_log_append(
-    as_value: &mut serde_json::Map<String, Value>,
-    patch: &Map<String, Value>,
-) -> bool {
-    let is_log = as_value.get("type").and_then(Value::as_str) == Some("log");
-    let Some(Value::Array(added)) = patch.get("append") else {
-        return false;
-    };
-    if !is_log {
-        return false;
-    }
-    let lines = as_value
-        .entry("lines".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(lines) = lines {
-        lines.extend(added.iter().cloned());
-    }
-    true
 }

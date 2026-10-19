@@ -14,10 +14,37 @@
 //! [`surface::Session`]. Socket handling, broadcast fan-out and access
 //! control belong to the embedding daemon.
 
+//! Issue a turn and interpret a structurally valid answer.
+//!
+//! ```
+//! use msip::daemon::{Conversation, Disposition, TurnSpec};
+//! use msip::element::{Element, types};
+//! use msip::msg::Answer;
+//! use serde_json::json;
+//!
+//! let mut conversation = Conversation::new("settings")?;
+//! let mut name = Element::new("name", types::STRING);
+//! name.required = true;
+//! conversation.issue(TurnSpec {
+//!     elements: vec![name],
+//!     ..Default::default()
+//! })?;
+//! let answer = Answer {
+//!     seq: conversation.seq(),
+//!     action: None,
+//!     values: [("name".into(), json!("workstation"))].into_iter().collect(),
+//! };
+//! assert!(matches!(conversation.handle_answer(&answer), Disposition::Valid(_)));
+//! // Apply domain validation, then issue the next turn or end the conversation
+//! // before accepting another answer. This check alone does not consume it.
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+
 pub mod daemon;
 pub mod element;
 pub mod frame;
 pub mod msg;
+mod patch;
 pub mod surface;
 
 pub use element::Element;

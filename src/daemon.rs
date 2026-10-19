@@ -3,8 +3,9 @@
 //! [`Conversation`] is the turn state machine: it assigns sequence
 //! numbers, remembers the outstanding page (patched by every update it
 //! issues, so a late joiner receives current state, not history), and
-//! arbitrates answers — first valid answer wins, stale answers are
-//! ignored, malformed ones are protocol errors. It is transport-free:
+//! checks answers for staleness, required fields, and protocol violations.
+//! The caller must serialize answer checking, domain validation, and acceptance
+//! through `issue` or `end` to enforce first-valid-answer arbitration. It is transport-free:
 //! the embedding daemon owns sockets, broadcast fan-out and access
 //! control, and sends whatever this type returns to every attached
 //! surface.
@@ -16,10 +17,13 @@ use std::io::{self, Read};
 use serde_json::{Map, Value};
 
 use crate::element::{Element, types};
+use crate::patch::{self, PatchError};
 use crate::msg::{Answer, End, ErrorCode, ErrorMsg, Outcome, Turn, Update};
 
-/// A turn as the application describes it; `Conversation::issue`
-/// assigns the seq.
+/// A turn supplied by the application; [`Conversation::issue`] assigns its sequence.
+///
+/// The caller supplies unique refs, valid defaults and state, and only element
+/// types supported by every attached surface. Secrets must stay out of state.
 #[derive(Debug, Clone, Default)]
 pub struct TurnSpec {
     pub id: Option<String>,
@@ -56,6 +60,7 @@ pub struct ValidAnswer {
     pub values: Map<String, Value>,
 }
 
+/// A refused conversation mutation. An error leaves the published turn unchanged.
 #[derive(Debug)]
 pub enum StateError {
     /// The ref named in a sparse update does not exist in the
@@ -63,6 +68,8 @@ pub enum StateError {
     UnknownRef(String),
     /// No turn is outstanding.
     NoTurn,
+    /// An update contains an invalid ref field or produces invalid element fields.
+    Malformed(String),
     /// The conversation has ended.
     Ended,
 }
@@ -71,6 +78,7 @@ impl fmt::Display for StateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StateError::UnknownRef(r) => write!(f, "no element {r:?} in the outstanding turn"),
+            StateError::Malformed(message) => write!(f, "malformed update: {message}"),
             StateError::NoTurn => write!(f, "no turn outstanding"),
             StateError::Ended => write!(f, "conversation has ended"),
         }
@@ -79,6 +87,10 @@ impl fmt::Display for StateError {
 
 impl std::error::Error for StateError {}
 
+/// Transport-independent turn state owned by the embedding daemon.
+///
+/// This type does not manage connections, authorization, binding, or broadcasts.
+/// Serialize answer validation and acceptance when several surfaces can answer.
 pub struct Conversation {
     id: String,
     kind: String,
@@ -88,6 +100,10 @@ pub struct Conversation {
 }
 
 impl Conversation {
+    /// Create an unstarted conversation using 128 random bits from `/dev/urandom`.
+    ///
+    /// Returns an I/O error if randomness cannot be read. The identifier is not
+    /// an authorization credential; the caller must authorize each attachment.
     pub fn new(kind: &str) -> io::Result<Conversation> {
         let mut raw = [0u8; 16];
         File::open("/dev/urandom")?.read_exact(&mut raw)?;
@@ -101,18 +117,22 @@ impl Conversation {
         })
     }
 
+    /// Return the conversation identifier.
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    /// Return the application-defined conversation kind.
     pub fn kind(&self) -> &str {
         &self.kind
     }
 
+    /// Return the last issued sequence number, or zero before the first turn.
     pub fn seq(&self) -> u64 {
         self.seq
     }
 
+    /// Report whether `end` has completed this conversation.
     pub fn ended(&self) -> bool {
         self.ended
     }
@@ -143,20 +163,18 @@ impl Conversation {
     /// Sparse update: each patch is an object with `ref` plus changed
     /// fields. Patches are folded into the stored turn so late joiners
     /// see current state. Returns the message to broadcast.
+    ///
+    /// The whole batch is atomic. A malformed patch or unknown ref changes nothing.
+    /// Repeated refs observe preceding patches in the same batch.
     pub fn update(&mut self, patches: Vec<Map<String, Value>>) -> Result<Update, StateError> {
         if self.ended {
             return Err(StateError::Ended);
         }
         let turn = self.current.as_mut().ok_or(StateError::NoTurn)?;
-        for patch in &patches {
-            let target = patch.get("ref").and_then(Value::as_str).unwrap_or_default();
-            let elem = turn
-                .elements
-                .iter_mut()
-                .find(|e| e.r#ref == target)
-                .ok_or_else(|| StateError::UnknownRef(target.to_string()))?;
-            merge_patch(elem, patch);
-        }
+        patch::apply(&mut turn.elements, &patches).map_err(|error| match error {
+            PatchError::UnknownRef(name) => StateError::UnknownRef(name),
+            PatchError::Malformed(message) => StateError::Malformed(message),
+        })?;
         Ok(Update {
             seq: turn.seq,
             full: false,
@@ -175,9 +193,13 @@ impl Conversation {
         let full = turn
             .elements
             .iter()
-            .map(|e| match serde_json::to_value(e) {
-                Ok(Value::Object(m)) => m,
-                _ => Map::new(),
+            .map(|element| {
+                let Value::Object(fields) =
+                    serde_json::to_value(element).expect("Element fields are JSON-serializable")
+                else {
+                    unreachable!("Element serializes as an object");
+                };
+                fields
             })
             .collect();
         Ok(Update {
@@ -310,51 +332,4 @@ impl Conversation {
             values,
         })
     }
-}
-
-/// Overlay a sparse patch onto a stored element, keeping the typed
-/// common fields and the open state map coherent.
-fn merge_patch(elem: &mut Element, patch: &Map<String, Value>) {
-    let mut as_value = match serde_json::to_value(&*elem) {
-        Ok(Value::Object(m)) => m,
-        _ => return,
-    };
-    let folded_append = fold_log_append(&mut as_value, patch);
-    for (k, v) in patch {
-        if k == "ref" || (folded_append && k == "append") {
-            continue;
-        }
-        if v.is_null() {
-            as_value.remove(k);
-        } else {
-            as_value.insert(k.clone(), v.clone());
-        }
-    }
-    if let Ok(updated) = serde_json::from_value(Value::Object(as_value)) {
-        *elem = updated;
-    }
-}
-
-/// The one type-aware folding rule: a sparse patch to a `log` element
-/// carrying `append` extends `lines` rather than storing `append`
-/// (§3.B), so folded state accumulates and a late joiner receives the
-/// whole log.
-fn fold_log_append(
-    as_value: &mut serde_json::Map<String, Value>,
-    patch: &Map<String, Value>,
-) -> bool {
-    let is_log = as_value.get("type").and_then(Value::as_str) == Some("log");
-    let Some(Value::Array(added)) = patch.get("append") else {
-        return false;
-    };
-    if !is_log {
-        return false;
-    }
-    let lines = as_value
-        .entry("lines".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Value::Array(lines) = lines {
-        lines.extend(added.iter().cloned());
-    }
-    true
 }
