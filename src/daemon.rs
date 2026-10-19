@@ -241,85 +241,40 @@ impl Conversation {
 
     /// Arbitrate a received answer. Does the structural work the
     /// protocol defines — staleness, ref existence, action rules,
-    /// required-field presence, default filling — and leaves domain
-    /// validation to the application.
-    pub fn handle_answer(&self, ans: &Answer) -> Disposition {
+    /// built-in input encodings and choices, required fields, and defaults.
+    /// Domain rules and negotiated extension validation belong to the application.
+    ///
+    /// Checking does not consume an answer. Accept it by issuing the next turn
+    /// or ending the conversation before checking another competing answer.
+    pub fn handle_answer(&self, answer: &Answer) -> Disposition {
         if self.ended {
             return Disposition::Stale;
         }
         let turn = match &self.current {
-            Some(t) if t.seq == ans.seq => t,
+            Some(t) if t.seq == answer.seq => t,
             _ => return Disposition::Stale,
         };
 
-        let element = |r: &str| turn.elements.iter().find(|e| e.r#ref == r);
-
-        // Values must name enabled, non-action elements of the turn.
-        for r in ans.values.keys() {
-            match element(r) {
-                None => {
-                    return Disposition::Protocol(ErrorMsg {
-                        code: ErrorCode::UnknownRef,
-                        message: Some(format!("no element {r:?} in turn {}", turn.seq)),
-                    });
-                }
-                Some(e) if e.is_action() => {
-                    return Disposition::Protocol(ErrorMsg {
-                        code: ErrorCode::BadValue,
-                        message: Some(format!("{r:?} is an action and carries no value")),
-                    });
-                }
-                Some(e) if !e.enabled => {
-                    return Disposition::Protocol(ErrorMsg {
-                        code: ErrorCode::BadValue,
-                        message: Some(format!("{r:?} is disabled")),
-                    });
-                }
-                Some(_) => {}
-            }
+        if let Err(error) = check_values(turn, answer) {
+            return Disposition::Protocol(error);
         }
-
-        // The action must be an enabled action element; a turn that
-        // offers actions must have one named, and one that offers none
-        // takes the implicit submit (action absent).
-        let has_actions = turn.elements.iter().any(|e| e.is_action() && e.enabled);
-        let validating = match &ans.action {
-            Some(a) => match element(a) {
-                Some(e) if e.is_action() && e.enabled => e.validates(),
-                Some(_) => {
-                    return Disposition::Protocol(ErrorMsg {
-                        code: ErrorCode::BadValue,
-                        message: Some(format!("{a:?} is not an enabled action")),
-                    });
-                }
-                None => {
-                    return Disposition::Protocol(ErrorMsg {
-                        code: ErrorCode::UnknownRef,
-                        message: Some(format!("no action {a:?} in turn {}", turn.seq)),
-                    });
-                }
-            },
-            None if has_actions => {
-                return Disposition::Protocol(ErrorMsg {
-                    code: ErrorCode::BadValue,
-                    message: Some("turn offers actions; the answer must name one".into()),
-                });
-            }
-            None => true,
+        let validating = match validating_action(turn, answer.action.as_deref()) {
+            Ok(validating) => validating,
+            Err(error) => return Disposition::Protocol(error),
         };
 
-        let mut values = ans.values.clone();
+        let mut values = answer.values.clone();
         let mut missing = Vec::new();
         if validating {
             for e in &turn.elements {
-                if e.is_action() || !e.enabled || e.r#type == types::TEXT {
+                if e.is_action() || !e.enabled || is_output(e) {
                     continue;
                 }
                 if !values.contains_key(&e.r#ref) {
-                    if let Some(d) = &e.default {
-                        values.insert(e.r#ref.clone(), d.clone());
-                    } else if e.required {
+                    if e.required {
                         missing.push((e.r#ref.clone(), "required".to_string()));
+                    } else if let Some(default) = &e.default {
+                        values.insert(e.r#ref.clone(), default.clone());
                     }
                 }
             }
@@ -328,8 +283,126 @@ impl Conversation {
             return Disposition::Invalid(missing);
         }
         Disposition::Valid(ValidAnswer {
-            action: ans.action.clone(),
+            action: answer.action.clone(),
             values,
         })
     }
+}
+
+fn protocol_error(code: ErrorCode, message: String) -> ErrorMsg {
+    ErrorMsg {
+        code,
+        message: Some(message),
+    }
+}
+
+fn is_output(element: &Element) -> bool {
+    matches!(
+        element.r#type.as_str(),
+        types::TEXT | types::PROGRESS | types::LOG
+    )
+}
+
+fn check_values(turn: &Turn, answer: &Answer) -> Result<(), ErrorMsg> {
+    for (name, value) in &answer.values {
+        let element = turn
+            .elements
+            .iter()
+            .find(|element| element.r#ref == *name)
+            .ok_or_else(|| {
+                protocol_error(
+                    ErrorCode::UnknownRef,
+                    format!("no element {name:?} in turn {}", turn.seq),
+                )
+            })?;
+        if !element.enabled || element.is_action() || is_output(element) {
+            return Err(protocol_error(
+                ErrorCode::BadValue,
+                format!("{name:?} is not an enabled input"),
+            ));
+        }
+        if !valid_value(element, value) {
+            return Err(protocol_error(
+                ErrorCode::BadValue,
+                format!("invalid answer encoding or choice for {name:?}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_value(element: &Element, value: &Value) -> bool {
+    match element.r#type.as_str() {
+        types::STRING => value.is_string(),
+        types::BOOLEAN => value.is_boolean(),
+        types::SELECT => {
+            let multiple = element
+                .state
+                .get("multiple")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if multiple {
+                value.as_array().is_some_and(|values| {
+                    values
+                        .iter()
+                        .all(|value| offered_choice(element, "choices", value))
+                })
+            } else {
+                offered_choice(element, "choices", value)
+            }
+        }
+        types::TABLE => offered_choice(element, "rows", value),
+        // The negotiated extension's contract belongs to the embedding daemon.
+        _ => true,
+    }
+}
+
+fn offered_choice(element: &Element, field: &str, value: &Value) -> bool {
+    element
+        .state
+        .get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            choices.iter().any(|choice| {
+                choice.get("value") == Some(value)
+                    && (field != "rows"
+                        || choice
+                            .get("enabled")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true))
+            })
+        })
+}
+
+fn validating_action(turn: &Turn, action: Option<&str>) -> Result<bool, ErrorMsg> {
+    let Some(name) = action else {
+        if turn
+            .elements
+            .iter()
+            .any(|element| element.is_action() && element.enabled)
+        {
+            return Err(protocol_error(
+                ErrorCode::BadValue,
+                "turn offers actions; the answer must name one".into(),
+            ));
+        }
+        return Ok(true);
+    };
+    let element = turn
+        .elements
+        .iter()
+        .find(|element| element.r#ref == name)
+        .ok_or_else(|| {
+            protocol_error(
+                ErrorCode::UnknownRef,
+                format!("no action {name:?} in turn {}", turn.seq),
+            )
+        })?;
+    if !element.is_action() || !element.enabled {
+        return Err(protocol_error(
+            ErrorCode::BadValue,
+            format!("{name:?} is not an enabled action"),
+        ));
+    }
+    Ok(element.validates())
 }
