@@ -79,7 +79,7 @@ component documentation and then the full publication context:
 
 ```sh
 tools/check-docs
-tools/check-docs --context ../panorama/docs
+tools/check-docs --context ../learn
 ```
 
 The component check permits only the exact external-link diagnostic baseline
