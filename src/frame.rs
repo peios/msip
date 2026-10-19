@@ -11,8 +11,11 @@ use std::io::{self, Read, Write};
 
 use serde::Serialize;
 
+/// Four-byte discriminator checked on every frame.
 pub const MAGIC: [u8; 4] = *b"MSIP";
+/// Supported MSIP wire version.
 pub const VERSION: u16 = 1;
+/// Wire header size in bytes.
 pub const HEADER_LEN: usize = 12;
 /// Header plus body. Larger than Logon's 64 KiB because `log` elements
 /// legitimately carry bulk.
@@ -20,6 +23,7 @@ pub const MAX_TOTAL_LEN: u32 = 1 << 20;
 /// Set on every message sent by the daemon; clear on surface messages.
 pub const DAEMON_BIT: u16 = 0x8000;
 
+/// Version-one message identifiers; direction is encoded in the high bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MsgType {
@@ -41,6 +45,7 @@ pub enum MsgType {
 }
 
 impl MsgType {
+    /// Whether this message type is sent by a daemon.
     pub fn from_daemon(self) -> bool {
         (self as u16) & DAEMON_BIT != 0
     }
@@ -66,6 +71,7 @@ impl MsgType {
     }
 }
 
+/// Invalid framing, JSON, or an underlying stream error.
 #[derive(Debug)]
 pub enum FrameError {
     Io(io::Error),
@@ -93,7 +99,15 @@ impl fmt::Display for FrameError {
     }
 }
 
-impl std::error::Error for FrameError {}
+impl std::error::Error for FrameError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Json(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<io::Error> for FrameError {
     fn from(e: io::Error) -> Self {
@@ -101,40 +115,61 @@ impl From<io::Error> for FrameError {
     }
 }
 
+/// Encode one JSON object, write its frame, and flush the stream.
+///
+/// Invalid bodies and oversized frames fail before any bytes are written. An
+/// I/O error can leave a partial frame; the caller must abandon that connection.
+/// Serialize concurrent writes and configure transport deadlines in the caller.
 pub fn write_msg<W: Write, T: Serialize>(
-    w: &mut W,
-    t: MsgType,
+    writer: &mut W,
+    message_type: MsgType,
     body: &T,
 ) -> Result<(), FrameError> {
     let body = serde_json::to_vec(body).map_err(FrameError::Json)?;
-    let total = HEADER_LEN + body.len();
-    if total > MAX_TOTAL_LEN as usize {
-        return Err(FrameError::TooLarge(total as u32));
+    // serde_json::to_vec emits valid JSON without leading whitespace. Checking
+    // its first byte preserves the serialized field order and avoids reparsing.
+    if body.first() != Some(&b'{') {
+        return Err(FrameError::Json(serde::ser::Error::custom(
+            "MSIP body must be an object",
+        )));
     }
-    let mut hdr = [0u8; HEADER_LEN];
-    hdr[0..4].copy_from_slice(&MAGIC);
-    hdr[4..6].copy_from_slice(&VERSION.to_le_bytes());
-    hdr[6..8].copy_from_slice(&(t as u16).to_le_bytes());
-    hdr[8..12].copy_from_slice(&(total as u32).to_le_bytes());
-    w.write_all(&hdr)?;
-    w.write_all(&body)?;
-    w.flush()?;
+    let total = HEADER_LEN.saturating_add(body.len());
+    if total > MAX_TOTAL_LEN as usize {
+        return Err(FrameError::TooLarge(
+            u32::try_from(total).unwrap_or(u32::MAX),
+        ));
+    }
+    let mut header = [0u8; HEADER_LEN];
+    header[0..4].copy_from_slice(&MAGIC);
+    header[4..6].copy_from_slice(&VERSION.to_le_bytes());
+    header[6..8].copy_from_slice(&(message_type as u16).to_le_bytes());
+    header[8..12].copy_from_slice(&(total as u32).to_le_bytes());
+    writer.write_all(&header)?;
+    writer.write_all(&body)?;
+    writer.flush()?;
     Ok(())
 }
 
-pub fn read_msg<R: Read>(r: &mut R) -> Result<(MsgType, serde_json::Value), FrameError> {
-    let mut hdr = [0u8; HEADER_LEN];
-    r.read_exact(&mut hdr)?;
-    if hdr[0..4] != MAGIC {
-        return Err(FrameError::BadMagic([hdr[0], hdr[1], hdr[2], hdr[3]]));
+/// Read one bounded frame containing a JSON object.
+///
+/// Header validation precedes body allocation. Any failure can leave the stream
+/// between messages; close it instead of attempting to resume decoding. The caller
+/// supplies read deadlines and checks message direction, schema, and connection state.
+pub fn read_msg<R: Read>(reader: &mut R) -> Result<(MsgType, serde_json::Value), FrameError> {
+    let mut header = [0u8; HEADER_LEN];
+    reader.read_exact(&mut header)?;
+    if header[0..4] != MAGIC {
+        return Err(FrameError::BadMagic([
+            header[0], header[1], header[2], header[3],
+        ]));
     }
-    let version = u16::from_le_bytes([hdr[4], hdr[5]]);
+    let version = u16::from_le_bytes([header[4], header[5]]);
     if version != VERSION {
         return Err(FrameError::UnsupportedVersion(version));
     }
-    let raw_type = u16::from_le_bytes([hdr[6], hdr[7]]);
-    let t = MsgType::from_u16(raw_type).ok_or(FrameError::UnknownType(raw_type))?;
-    let total = u32::from_le_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]);
+    let raw_type = u16::from_le_bytes([header[6], header[7]]);
+    let message_type = MsgType::from_u16(raw_type).ok_or(FrameError::UnknownType(raw_type))?;
+    let total = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
     if total > MAX_TOTAL_LEN {
         return Err(FrameError::TooLarge(total));
     }
@@ -142,7 +177,9 @@ pub fn read_msg<R: Read>(r: &mut R) -> Result<(MsgType, serde_json::Value), Fram
         return Err(FrameError::TooSmall(total));
     }
     let mut body = vec![0u8; total as usize - HEADER_LEN];
-    r.read_exact(&mut body)?;
-    let value = serde_json::from_slice(&body).map_err(FrameError::Json)?;
-    Ok((t, value))
+    reader.read_exact(&mut body)?;
+    let object = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&body)
+        .map_err(FrameError::Json)?;
+    let value = serde_json::Value::Object(object);
+    Ok((message_type, value))
 }
