@@ -11,10 +11,6 @@ use msip::frame::MsgType;
 use msip::msg::{Outcome, Turn, Update};
 use msip::surface::{Event, Session};
 
-fn val(v: Value) -> Value {
-    v
-}
-
 fn disk_turn() -> TurnSpec {
     let mut intro = Element::new("disk.intro", types::TEXT);
     intro.state.insert(
@@ -195,7 +191,7 @@ fn answer_arbitration_rejects_protocol_violations() {
         action: action.map(str::to_string),
         values: values
             .into_iter()
-            .map(|(k, v)| (k.to_string(), val(v)))
+            .map(|(k, v)| (k.to_string(), v))
             .collect(),
     };
 

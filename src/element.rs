@@ -25,6 +25,10 @@ pub mod types {
     pub const ALL: &[&str] = &[TEXT, STRING, BOOLEAN, SELECT, PROGRESS, LOG, ACTION, TABLE];
 }
 
+/// A protocol element with common fields and open type-specific state.
+///
+/// `state` must not repeat common field names. Callers validate type-specific
+/// state and defaults before issuing elements. `Debug` is not secret-redacting.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Element {
     pub r#ref: String,
@@ -40,7 +44,8 @@ pub struct Element {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
-    /// No echo, never logged, and never carried in UPDATE state.
+    /// Requires masked input and no logging or retention of collected values.
+    /// The embedding application enforces these rules; serialization does not redact.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
     #[serde(default = "yes", skip_serializing_if = "Clone::clone")]
@@ -58,6 +63,7 @@ fn yes() -> bool {
 }
 
 impl Element {
+    /// Create an enabled element with empty state and protocol-default common fields.
     pub fn new(r#ref: &str, r#type: &str) -> Element {
         Element {
             r#ref: r#ref.to_string(),
@@ -74,6 +80,7 @@ impl Element {
         }
     }
 
+    /// Whether this element has the built-in action type.
     pub fn is_action(&self) -> bool {
         self.r#type == types::ACTION
     }

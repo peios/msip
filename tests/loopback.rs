@@ -4,6 +4,7 @@
 
 use std::os::unix::net::UnixStream;
 use std::thread;
+use std::time::Duration;
 
 use serde_json::{Map, json};
 
@@ -17,82 +18,15 @@ use msip::surface::{Event, Session};
 fn full_conversation_over_a_socket() {
     let (mut d_sock, mut s_sock) = UnixStream::pair().unwrap();
 
-    let daemon = thread::spawn(move || {
-        // HELLO -> WELCOME
-        let (t, body) = read_msg(&mut d_sock).unwrap();
-        assert_eq!(t, MsgType::Hello);
-        let hello: Hello = serde_json::from_value(body).unwrap();
-        assert!(hello.element_types.iter().any(|t| t == types::SELECT));
-        write_msg(
-            &mut d_sock,
-            MsgType::Welcome,
-            &Welcome {
-                daemon: Some("installerd/0.0".into()),
-                kinds: vec!["install".into()],
-            },
-        )
-        .unwrap();
-
-        // START -> BOUND + first TURN
-        let (t, body) = read_msg(&mut d_sock).unwrap();
-        assert_eq!(t, MsgType::Start);
-        assert_eq!(body["kind"], json!("install"));
-        let mut conv = Conversation::new("install").unwrap();
-        write_msg(
-            &mut d_sock,
-            MsgType::Bound,
-            &Bound {
-                conversation: conv.id().to_string(),
-                seq: conv.seq(),
-                attached: false,
-            },
-        )
-        .unwrap();
-        let mut target = Element::new("disk.target", types::SELECT);
-        target.required = true;
-        target.state.insert(
-            "choices".into(),
-            json!([{"value": "/dev/sda", "name": "disk"}]),
-        );
-        let turn = conv
-            .issue(TurnSpec {
-                id: Some("disk.choose".into()),
-                elements: vec![target, Element::new("nav.next", types::ACTION)],
-                ..Default::default()
-            })
-            .unwrap()
-            .clone();
-        write_msg(&mut d_sock, MsgType::Turn, &turn).unwrap();
-
-        // ANSWER -> next TURN (progress), one UPDATE, END
-        let (t, body) = read_msg(&mut d_sock).unwrap();
-        assert_eq!(t, MsgType::Answer);
-        let ans = serde_json::from_value(body).unwrap();
-        let Disposition::Valid(v) = conv.handle_answer(&ans) else {
-            panic!("expected a valid answer")
-        };
-        assert_eq!(v.values["disk.target"], json!("/dev/sda"));
-
-        let mut prog = Element::new("copy", types::PROGRESS);
-        prog.state.insert("value".into(), json!(0));
-        prog.state.insert("max".into(), json!(100));
-        let turn = conv
-            .issue(TurnSpec {
-                id: Some("install.progress".into()),
-                elements: vec![prog],
-                ..Default::default()
-            })
-            .unwrap()
-            .clone();
-        write_msg(&mut d_sock, MsgType::Turn, &turn).unwrap();
-        let mut patch = Map::new();
-        patch.insert("ref".into(), json!("copy"));
-        patch.insert("value".into(), json!(100));
-        let upd = conv.update(vec![patch]).unwrap();
-        write_msg(&mut d_sock, MsgType::Update, &upd).unwrap();
-        let end = conv.end(Outcome::Complete, None).unwrap();
-        write_msg(&mut d_sock, MsgType::End, &end).unwrap();
-    });
+    for socket in [&d_sock, &s_sock] {
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+    }
+    let daemon = thread::spawn(move || run_daemon(&mut d_sock));
 
     // The surface side.
     let mut session = Session::new();
@@ -149,27 +83,108 @@ fn full_conversation_over_a_socket() {
     daemon.join().unwrap();
 }
 
+fn run_daemon(socket: &mut UnixStream) {
+    // HELLO -> WELCOME
+    let (t, body) = read_msg(socket).unwrap();
+    assert_eq!(t, MsgType::Hello);
+    let hello: Hello = serde_json::from_value(body).unwrap();
+    assert!(hello.element_types.iter().any(|t| t == types::SELECT));
+    write_msg(
+        socket,
+        MsgType::Welcome,
+        &Welcome {
+            daemon: Some("installerd/0.0".into()),
+            kinds: vec!["install".into()],
+        },
+    )
+    .unwrap();
+
+    // START -> BOUND + first TURN
+    let (t, body) = read_msg(socket).unwrap();
+    assert_eq!(t, MsgType::Start);
+    assert_eq!(body["kind"], json!("install"));
+    let mut conv = Conversation::new("install").unwrap();
+    write_msg(
+        socket,
+        MsgType::Bound,
+        &Bound {
+            conversation: conv.id().to_string(),
+            seq: conv.seq(),
+            attached: false,
+        },
+    )
+    .unwrap();
+    send_disk_turn(socket, &mut conv);
+    answer_and_complete(socket, &mut conv);
+}
+
+fn send_disk_turn(socket: &mut UnixStream, conversation: &mut Conversation) {
+    let mut target = Element::new("disk.target", types::SELECT);
+    target.required = true;
+    target.state.insert(
+        "choices".into(),
+        json!([{"value": "/dev/sda", "name": "disk"}]),
+    );
+    let turn = conversation
+        .issue(TurnSpec {
+            id: Some("disk.choose".into()),
+            elements: vec![target, Element::new("nav.next", types::ACTION)],
+            ..Default::default()
+        })
+        .unwrap()
+        .clone();
+    write_msg(socket, MsgType::Turn, &turn).unwrap();
+}
+
+fn answer_and_complete(socket: &mut UnixStream, conversation: &mut Conversation) {
+    // ANSWER -> next TURN (progress), one UPDATE, END
+    let (t, body) = read_msg(socket).unwrap();
+    assert_eq!(t, MsgType::Answer);
+    let ans = serde_json::from_value(body).unwrap();
+    let Disposition::Valid(v) = conversation.handle_answer(&ans) else {
+        panic!("expected a valid answer")
+    };
+    assert_eq!(v.values["disk.target"], json!("/dev/sda"));
+
+    let mut prog = Element::new("copy", types::PROGRESS);
+    prog.state.insert("value".into(), json!(0));
+    prog.state.insert("max".into(), json!(100));
+    let turn = conversation
+        .issue(TurnSpec {
+            id: Some("install.progress".into()),
+            elements: vec![prog],
+            ..Default::default()
+        })
+        .unwrap()
+        .clone();
+    write_msg(socket, MsgType::Turn, &turn).unwrap();
+    let mut patch = Map::new();
+    patch.insert("ref".into(), json!("copy"));
+    patch.insert("value".into(), json!(100));
+    let upd = conversation.update(vec![patch]).unwrap();
+    write_msg(socket, MsgType::Update, &upd).unwrap();
+    let end = conversation.end(Outcome::Complete, None).unwrap();
+    write_msg(socket, MsgType::End, &end).unwrap();
+}
+
 #[test]
-fn wrong_magic_fails_the_connection_on_byte_zero() {
-    use std::io::Write;
-    let (mut a, mut b) = UnixStream::pair().unwrap();
-    a.write_all(b"PGSL\x01\x00\x01\x00\x0c\x00\x00\x00")
-        .unwrap();
-    match read_msg(&mut b) {
-        Err(FrameError::BadMagic(m)) => assert_eq!(&m, b"PGSL"),
+fn wrong_magic_rejects_the_frame() {
+    let mut bytes = &b"PGSL\x01\x00\x01\x00\x0c\x00\x00\x00"[..];
+    match read_msg(&mut bytes) {
+        Err(FrameError::BadMagic(magic)) => assert_eq!(&magic, b"PGSL"),
         other => panic!("expected BadMagic, got {other:?}"),
     }
 }
 
 #[test]
 fn oversized_declaration_is_rejected_without_reading_the_body() {
-    use std::io::Write;
-    let (mut a, mut b) = UnixStream::pair().unwrap();
-    let mut hdr = Vec::new();
-    hdr.extend_from_slice(b"MSIP");
-    hdr.extend_from_slice(&1u16.to_le_bytes());
-    hdr.extend_from_slice(&1u16.to_le_bytes());
-    hdr.extend_from_slice(&(2u32 << 20).to_le_bytes());
-    a.write_all(&hdr).unwrap();
-    assert!(matches!(read_msg(&mut b), Err(FrameError::TooLarge(_))));
+    let mut header = Vec::new();
+    header.extend_from_slice(b"MSIP");
+    header.extend_from_slice(&1u16.to_le_bytes());
+    header.extend_from_slice(&1u16.to_le_bytes());
+    header.extend_from_slice(&(2u32 << 20).to_le_bytes());
+    assert!(matches!(
+        read_msg(&mut header.as_slice()),
+        Err(FrameError::TooLarge(_))
+    ));
 }

@@ -10,7 +10,7 @@ use crate::element::Element;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hello {
     /// Observability only ("install-peios-tui/0.1"). A daemon MUST NOT
-    /// vary behaviour on it.
+    /// vary behavior on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
     /// Element types this surface can render. A daemon that needs a
@@ -19,6 +19,7 @@ pub struct Hello {
     pub element_types: Vec<String>,
 }
 
+/// Daemon greeting with supported conversation kinds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Welcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,9 +27,11 @@ pub struct Welcome {
     pub kinds: Vec<String>,
 }
 
+/// Request the conversations this peer is authorized to attach to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct List {}
 
+/// One authorized conversation in a listing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ListingEntry {
     pub conversation: String,
@@ -36,6 +39,7 @@ pub struct ListingEntry {
     pub seq: u64,
 }
 
+/// Conversations visible to the requesting peer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Listing {
     pub conversations: Vec<ListingEntry>,
@@ -49,11 +53,13 @@ pub struct Start {
     pub kind: String,
 }
 
+/// Request attachment to an existing conversation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attach {
     pub conversation: String,
 }
 
+/// Successful binding to a newly created or existing conversation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bound {
     pub conversation: String,
@@ -65,22 +71,18 @@ pub struct Bound {
     pub attached: bool,
 }
 
+/// Binding refusal reasons; unknown values are protocol errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusedReason {
     AccessDenied,
     UnknownKind,
     UnsupportedElements,
-    /// The daemon offers this kind but cannot open a conversation now.
-    ///
-    /// Its own reason because none of the others is true: the kind
-    /// exists, the caller may have it, and the surface can render it —
-    /// the daemon simply failed at something of its own. Without it a
-    /// daemon in that position can only hang up, and a surface cannot
-    /// tell a broken daemon from a slow one.
+    /// The kind exists, but the daemon cannot open a conversation.
     Unavailable,
 }
 
+/// A refused binding; the connection remains unbound.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Refused {
     pub reason: RefusedReason,
@@ -140,6 +142,7 @@ pub enum ErrorCode {
     UnexpectedType,
 }
 
+/// A connection-local protocol violation, with optional display text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorMsg {
     pub code: ErrorCode,
@@ -147,6 +150,7 @@ pub struct ErrorMsg {
     pub message: Option<String>,
 }
 
+/// Terminal operation outcomes; the wire spelling `cancelled` is preserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
@@ -155,6 +159,7 @@ pub enum Outcome {
     Failed,
 }
 
+/// The terminal message broadcast to every attached surface.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct End {
     pub seq: u64,
