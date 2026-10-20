@@ -10,7 +10,7 @@ graphical, and automated interfaces. The `msip` Rust crate provides wire
 framing, message structures, answer checks, and page state. It doesn't open
 listeners or run an operation for you.
 
-Use the [protocol specification](~peios/pgss/msip/scope-and-roles) for the
+Use the [protocol specification](~specifications/pgss/msip/scope-and-roles) for the
 complete contract. The library is a set of helpers, not a conformance claim
 for an application that embeds it.
 
@@ -91,3 +91,15 @@ A framing error can leave the stream between messages. Close the connection
 instead of attempting to resume decoding. A failed write can have sent a
 partial frame; don't retry that frame on the same stream. Configure read and
 write deadlines in the transport layer.
+
+## Presentation across surfaces
+
+Turn and element classes are optional presentation hints. The protocol
+carries typed content and state; it does not prescribe a daemon-controlled
+layout. Keep actions, required values, and validation correct when a surface
+ignores every class.
+
+The installer owns its terminal renderer's
+[presentation behavior](~peios/installer-operation/terminal-presentation).
+Those conventions describe `msip-tui`, not guarantees made by the Rust
+library or by all MSIP surfaces.

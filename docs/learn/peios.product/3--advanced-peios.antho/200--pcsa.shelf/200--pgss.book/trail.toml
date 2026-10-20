@@ -1,3 +1,0 @@
-title = "Peios Generic System Standards"
-short = "PGSS"
-description = "The cross-platform standards a system must implement to be Peios — contracts between two roles, either of which a third party can replace."

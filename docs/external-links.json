@@ -1,1 +1,4 @@
-[]
+[
+  "trail: warning: /peios/developing-for-peios/msip-daemons/rust-library: link '~peios/installer-operation/terminal-presentation' matches no page in product 'peios'",
+  "trail: warning: /peios/developing-for-peios/msip-daemons/rust-library: link '~specifications/pgss/msip/scope-and-roles' names unknown product 'specifications'"
+]

@@ -84,5 +84,5 @@ tools/check-docs --context ../learn
 
 The component check permits only the exact external-link diagnostic baseline
 in `docs/external-links.json`. Publication-context checking resolves links
-against the combined tree. Other PGSS chapters remain in Learn staging; the
-migration audit records the separate staging-context check.
+against the combined tree. The normative MSIP chapter lives centrally in
+Learn, in the Peios Specifications product, alongside the other PGSS chapters.

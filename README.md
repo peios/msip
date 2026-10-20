@@ -6,7 +6,8 @@ turns and submit answers. The library supplies framing, message types,
 answer checks, and shared page state. The embedding application owns
 transport, authentication, access control, binding, and domain validation.
 
-Read the [protocol and library documentation](docs/learn/), the
+Read the [protocol specification](https://learn.peios.org/specifications/pgss/msip/scope-and-roles),
+the [library documentation](docs/learn/), the
 [build guide](docs/building.md), and the [compatibility notes](docs/compatibility.md).
 The public documentation merges into Peios Learn as part of the Peios product.
 

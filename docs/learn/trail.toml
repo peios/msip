@@ -1,6 +1,6 @@
 sitename = "Peios Learn"
 title = "Multi-Surface Interaction Protocol"
-description = "Protocol contracts and Rust library integration for MSIP."
+description = "Rust library integration for MSIP."
 footer = "Peios Learn"
 featured = ["peios"]
 
