@@ -100,6 +100,6 @@ layout. Keep actions, required values, and validation correct when a surface
 ignores every class.
 
 The installer owns its terminal renderer's
-[presentation behavior](~peios/installer-operation/terminal-presentation).
+[presentation behavior](~peios/setup-conversations/terminal-presentation).
 Those conventions describe `msip-tui`, not guarantees made by the Rust
 library or by all MSIP surfaces.
