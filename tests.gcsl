@@ -1,0 +1,23 @@
+# msip's tests: its unit tests and each integration test, as `cargo test`
+# builds them, its documentation tests, as `cargo test --doc` runs them,
+# its API documentation, made with every warning denied, and Clippy's
+# checks, as `cargo clippy --all-targets -- -Dwarnings` makes them.
+#
+# A test's own code runs in a hermetic step of its own, so what it plans,
+# builds or fetches is in its parameters' defaults.
+import "github.com/gcslib/rust"
+
+# The unit tests and the integration tests: conversation, framing,
+# loopback, state, and validation.
+def test msip(tests: List<rust.RustTest> = rust.tests(crates(), "msip")) {
+    let each = for test in tests { = rust.run_test(test) }
+}
+
+# The documentation tests.
+def test doctests(ran: List<{}> = rust.doctests(crates(), "msip")) {}
+
+# rustdoc's checks of the API documentation, every warning denied.
+def test docs(made: Dir = build api_docs()) {}
+
+# Clippy's checks of every target, every warning denied.
+def test clippy(checked: List<{}> = rust.clippy(crates(), "msip", flags = ["-Dwarnings"])) {}

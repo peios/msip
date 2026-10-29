@@ -1,0 +1,14 @@
+# The msip library, each crate compiled on its own (see the rust library's
+# `workspace`), for glibc.
+import "github.com/gcslib/rust"
+
+# The msip workspace, planned.
+def crates() -> rust.RustWorkspace {
+    = rust.workspace(dir("."), rust.vendored(file("Cargo.lock")))
+}
+
+# The library's API documentation, made by rustdoc with every warning
+# denied.
+def build api_docs() {
+    = rust.docs(crates(), "msip", flags = ["-Dwarnings"])
+}

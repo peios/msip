@@ -1,29 +1,76 @@
 # Building MSIP
 
-Build on x86-64 Linux with a C/C++ compiler, linker, Python 3.11 or later,
-and network access for initial dependency acquisition. The launcher verifies
-Bazel 8.4.2 against `build/bazel.sha256`; MODULE.bazel pins Rust 1.98.1 and
-rule versions. Cargo.lock pins Rust dependencies.
+Use pekit to build the MSIP library and run its tests. Pekit builds each
+crate on its own, so a change rebuilds only the crates it reaches. The
+supported development host is x86-64 Linux.
 
-Run the library, socket, protocol, and package-writer tests:
+## Before you start
+
+You need pekit and Git. Everything else is pinned and fetched by pekit on
+the first build: the Bootlin C toolchain, Rust 1.98.1 with Clippy, Python
+3.14, and the crates `Cargo.lock` selects. The first build needs network
+access; later builds find what they need in pekit's store, and every step
+runs without network access in a sandbox that holds only its declared
+inputs.
+
+The build files use the gcslib libraries named in `workspace.gcsl` and the
+build files. `pekit lock` pins their commits in `pekit.lock`.
+
+## Build
 
 ```sh
-./bazel test //...
-./bazel build //:packages //:api-docs
+pekit build api_docs
 ```
 
-The `//:msip` target is the Rust library. The source package is in
-`bazel-bin/packages.store`, including canonical manifests, compressed blobs,
-provenance, and an index. The single package is `dev.peios.msip-source`,
-version `0.1.1-1`, architecture `noarch`. It installs the declared source
-view under `/usr/src/msip`. It contains neither a daemon nor a C ABI library.
+| Target | Output |
+|---|---|
+| `api_docs` | The library's API documentation, made by rustdoc with every warning denied |
 
-The PPK writer in `third_party/ppk` is an unchanged, pinned source snapshot.
-The packaging action verifies its manifest identity and decompresses every
-blob to verify its SHA-256 identity. Output is unsigned development material,
-not a release. Package versions remain explicit decisions.
+The library itself is a Rust crate that consumers build from source. It
+has no C ABI, shared library, or daemon program.
 
-## Cargo and style
+## Test
+
+```sh
+pekit test
+```
+
+| Test | Check |
+|---|---|
+| `msip` | The unit tests and the conversation, framing, loopback, state, and validation tests |
+| `doctests` | The documentation tests |
+| `docs` | rustdoc's checks of the API documentation, with every warning denied |
+| `clippy` | Clippy's checks of every target, with every warning denied |
+
+A test whose inputs did not change is found in the store and not run
+again.
+
+For the full contributor check, install the pinned PSC tools into a
+directory outside the repository, then run the shared entry point:
+
+```sh
+python3 tools/prepare-style-tools.py "$HOME/.cache/msip-style"
+export PEIOS_STYLE_BIN="$HOME/.cache/msip-style/bin"
+tools/check
+```
+
+`tools/check` checks owned source formatting and lint with rustfmt, Ruff,
+ShellCheck, shfmt, and Prettier, then runs `pekit test`. The style checks
+use the host's Rust 1.98.1 formatter through rustup. The tool versions and
+hashes are recorded in `tools/style-tools.lock.json`. GitHub's workflow
+runs the style checks alone; builds and tests run with pekit.
+
+Imports preserve their declared order; group standard-library, third-party,
+and project-local imports manually when editing.
+
+## How the build is planned
+
+`build.gcsl` plans the Cargo workspace with the gcslib rust library's
+`workspace`: Cargo works out the build, unit by unit, and pekit compiles
+each unit as a step. Planning reads the manifests, `Cargo.lock`, and which
+files exist, never the sources, so editing a source plans nothing again.
+Keep Rust dependency versions in `Cargo.toml` and `Cargo.lock`, and update
+the lockfile deliberately with Cargo.
 
 Cargo remains available to Rust consumers and for diagnostics:
 
@@ -32,57 +79,26 @@ cargo +1.98.1 test --locked
 cargo +1.98.1 clippy --locked --all-targets -- -D warnings
 ```
 
-Prepare the pinned PSC tools outside the source tree, then run all host checks:
+## Not built with pekit yet
 
-```sh
-python3 tools/prepare-style-tools.py /tmp/msip-style
-PEIOS_STYLE_BIN=/tmp/msip-style/bin tools/check
-```
-
-Use Rust 1.98.1 with rustfmt and Clippy, Node.js 22, and Python with `venv`
-support for tooling setup. The style checker excludes the unchanged upstream
-PPK source snapshot. Its local Bazel definitions remain maintained here.
-Imports preserve their declared order; group standard-library, third-party,
-and project-local imports manually when editing.
-
-## Native Peios builds
-
-`--config=peios` selects the installed Peios Rust compiler and hardened
-standard library, with control-flow protection and linker hardening. Set
-`PEIOS_RUSTC` to the patched compiler when it isn't `/usr/bin/rustc`.
-An ordinary Debian compiler is not a replacement for this toolchain.
-
-Acquire inputs on a networked development host:
-
-```sh
-tools/offline-build acquire /tmp/msip-inputs
-```
-
-Copy the unchanged source tree and snapshot into an isolated native build
-environment. It needs Python, Bazel's host requirements, the Peios Rust
-compiler, and a compatible C/C++ compiler and linker. Run there:
-
-```sh
-tools/offline-build test /tmp/msip-inputs /tmp/msip-work
-```
-
-The helper checks the module lock, freezes external repositories, and disables
-repository downloads. The environment owner supplies isolation and blocks
-network access; the helper doesn't create a container or chroot. Source
-packages do not vendor Cargo dependencies. The snapshot supplies those inputs
-for offline Bazel builds and is separate from the installed source package.
+The source package, `dev.peios.msip-source`, and builds with the native
+Peios toolchain, which hardens programs with control-flow enforcement
+technology (CET), are not yet built with pekit. The package definition and
+native build settings from the Bazel build are kept outside this
+repository until they are.
 
 ## Documentation
 
-Use the Trail revision pinned by `.github/workflows/check.yml`. Check the
-component documentation and then the full publication context:
+Check the component documentation and then the full publication context:
 
 ```sh
 tools/check-docs
 tools/check-docs --context ../learn
 ```
 
-The component check permits only the exact external-link diagnostic baseline
-in `docs/external-links.json`. Publication-context checking resolves links
+Set `TRAIL` to the Trail executable if it is not on `PATH`. The component
+check permits only the exact external-link diagnostic baseline in
+`docs/external-links.json`. Publication-context checking resolves links
 against the combined tree. The normative MSIP chapter lives centrally in
-Learn, in the Peios Specifications product, alongside the other PGSS chapters.
+Learn, in the Peios Specifications product, alongside the other PGSS
+chapters.

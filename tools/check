@@ -1,9 +1,10 @@
 #!/bin/sh
-# Validate maintained sources, native Bazel targets, and canonical packages.
+# The contributor check: owned source style, then pekit's tests, which build
+# the library, run its unit, integration and documentation tests, make its
+# API documentation, and check it with Clippy.
 set -eu
+
 repo=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 python3 tools/style-check.py
-./bazel test //...
-./bazel build //:packages //:api-docs
-cargo +1.98.1 clippy --locked --all-targets -- -D warnings
+pekit test

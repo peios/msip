@@ -25,46 +25,18 @@ def run(args: list[str]) -> None:
 
 
 def main() -> None:
-    python = sorted(
-        str(p.relative_to(ROOT))
-        for root in ("tools", "packages")
-        for p in (ROOT / root).glob("*.py")
-    )
+    python = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tools").glob("*.py"))
     if (ROOT / "tools/check-docs").exists():
         python.append("tools/check-docs")
     ruff = tool("ruff", "ruff 0.17.0")
     run([ruff, "check", "--no-cache", "--config", "tools/ruff.toml", *python])
     run([ruff, "format", "--check", "--no-cache", "--config", "tools/ruff.toml", *python])
-    shell = ["bazel", "tools/check", "tools/offline-build"]
+    shell = ["tools/check"]
     run([tool("shellcheck", "version: 0.11.0"), *shell])
     run([tool("shfmt", "v3.14.1"), "-d", "-i", "4", *shell])
-    starlark = ["BUILD.bazel", "MODULE.bazel", "third_party/ppk/BUILD.bazel"]
-    starlark += sorted(
-        str(p.relative_to(ROOT))
-        for root in ("build", "packages")
-        for p in (ROOT / root).rglob("*")
-        if p.suffix == ".bzl" or p.name == "BUILD.bazel"
-    )
-    directory = os.environ.get("PEIOS_STYLE_BIN")
-    buildifier = str(Path(directory) / "buildifier") if directory else "buildifier"
-    if "buildifier version: 10.1.0" not in [
-        line.strip()
-        for line in subprocess.check_output([buildifier, "--version"], text=True).splitlines()
-    ]:
-        raise SystemExit("buildifier must be version 10.1.0")
-    run(
-        [
-            buildifier,
-            "-mode=check",
-            "-lint=warn",
-            "-warnings=load,unused-variable,function-docstring",
-            *starlark,
-        ]
-    )
     data = sorted(
         str(p.relative_to(ROOT))
-        for root in ("packages", ".github")
-        for p in (ROOT / root).rglob("*")
+        for p in (ROOT / ".github").rglob("*")
         if p.suffix in {".json", ".yml"}
     )
     if data:
@@ -80,7 +52,6 @@ def main() -> None:
             "tools/rustfmt.toml",
             "src/lib.rs",
             *sorted(str(path.relative_to(ROOT)) for path in (ROOT / "tests").glob("*.rs")),
-            "packages/check_blobs.rs",
         ]
     )
 
