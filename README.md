@@ -11,13 +11,12 @@ the [library documentation](docs/learn/), the
 [build guide](docs/building.md), and the [compatibility notes](docs/compatibility.md).
 The public documentation merges into Peios Learn as part of the Peios product.
 
-Build and test on x86-64 Linux:
+Build and test on x86-64 Linux with pekit:
 
 ```sh
-./bazel test //...
-./bazel build //:packages //:api-docs
+pekit test
 ```
 
 Cargo remains supported for Rust consumers. Pin an exact source revision;
 this repository does not publish a C ABI, shared library, or daemon binary.
-The source package is unsigned development output. See [LICENSE](LICENSE).
+See [LICENSE](LICENSE).
